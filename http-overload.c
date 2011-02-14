@@ -20,6 +20,7 @@
 
 struct global_context {
     int n_connections_made;
+    int n_remaining_connections;
     int n_requests_sent;
     int n_responses_received;
     int n_request_contexts;
@@ -36,7 +37,6 @@ struct global_context {
     uint64_t timeout;
     dispatch_source_t abort_source;
     int highest_good_fd;
-    struct context *final_context;
     char *request_text;
     size_t request_text_length;
 };
@@ -103,7 +103,7 @@ void prepare_network(struct global_context *global_context);
 void prepare_request_text(struct global_context *global_context);
 void prepare_heavy_lifting(struct global_context *global_context);
 void measure(struct statistics *statistics, struct parameters *parameters);
-void finish_measuring(struct context *context);
+void finish_measuring(struct global_context *global_context);
 void initiate_connection(struct context *context);
 void terminate_connection(struct context *context);
 void write_event(struct context *context);
@@ -121,72 +121,72 @@ int main(int argc, char **argv) {
     parameters = malloc(sizeof(struct parameters));
     
     for(int i = 1; i < argc; i++) {
-	if(!strcmp(argv[i], "--server")) {
-	    if(i + 1 < argc) {
-		i++;
-		parameters->server = argv[i];
-		have_server = 1;
-	    } else goto usage;
-	} else if(!strcmp(argv[i], "--port")) {
-	    if(i + 1 < argc) {
-		i++;
-		parameters->port = atoi(argv[i]);
-		have_port = 1;
-	    } else goto usage;
-	} else if(!strcmp(argv[i], "--path")) {
-	    if(i + 1 < argc) {
-		i++;
-		parameters->path = argv[i];
-		have_path = 1;
-	    } else goto usage;
-	} else if(!strcmp(argv[i], "--n-requests")) {
-	    if(i + 1 < argc) {
-		i++;
-		parameters->n_requests = atoi(argv[i]);
-		have_n_requests = 1;
-	    } else goto usage;
-	} else if(!strcmp(argv[i], "--rate")) {
-	    if(i + 1 < argc) {
-		i++;
-		parameters->rate = atoi(argv[i]);
-		have_rate = 1;
-	    } else goto usage;
-	} else if(!strcmp(argv[i], "--timeout")) {
-	    if(i + 1 < argc) {
-		i++;
-		parameters->timeout = atoi(argv[i]);
-		have_timeout = 1;
-	    } else goto usage;
-	} else goto usage;
+        if(!strcmp(argv[i], "--server")) {
+            if(i + 1 < argc) {
+                i++;
+                parameters->server = argv[i];
+                have_server = 1;
+            } else goto usage;
+        } else if(!strcmp(argv[i], "--port")) {
+            if(i + 1 < argc) {
+                i++;
+                parameters->port = atoi(argv[i]);
+                have_port = 1;
+            } else goto usage;
+        } else if(!strcmp(argv[i], "--path")) {
+            if(i + 1 < argc) {
+                i++;
+                parameters->path = argv[i];
+                have_path = 1;
+            } else goto usage;
+        } else if(!strcmp(argv[i], "--n-requests")) {
+            if(i + 1 < argc) {
+                i++;
+                parameters->n_requests = atoi(argv[i]);
+                have_n_requests = 1;
+            } else goto usage;
+        } else if(!strcmp(argv[i], "--rate")) {
+            if(i + 1 < argc) {
+                i++;
+                parameters->rate = atoi(argv[i]);
+                have_rate = 1;
+            } else goto usage;
+        } else if(!strcmp(argv[i], "--timeout")) {
+            if(i + 1 < argc) {
+                i++;
+                parameters->timeout = atoi(argv[i]);
+                have_timeout = 1;
+            } else goto usage;
+        } else goto usage;
     }
     
     bool missing_any = 0;
     if(!have_server) {
-	fprintf(stderr, "Must provide a server, with --server <hostname>.\n");
-	missing_any = 1;
+        fprintf(stderr, "Must provide a server, with --server <hostname>.\n");
+        missing_any = 1;
     }
     if(!have_port) {
-	parameters->port = 80;
+        parameters->port = 80;
     }
     if(!have_path) {
-	fprintf(stderr, "Must provide a path, with --path <path>.\n");
-	missing_any = 1;
+        fprintf(stderr, "Must provide a path, with --path <path>.\n");
+        missing_any = 1;
     }
     if(!have_n_requests) {
-	fprintf(stderr,
-		"Must provide number of connections, with --n-requests <n>.\n");
-	missing_any = 1;
+        fprintf(stderr,
+                "Must provide number of connections, with --n-requests <n>.\n");
+        missing_any = 1;
     }
     if(!have_rate) {
-	fprintf(stderr, "Must provide connection rate, with --rate <n/s>.\n");
-	missing_any = 1;
+        fprintf(stderr, "Must provide connection rate, with --rate <n/s>.\n");
+        missing_any = 1;
     }
     if(!have_timeout) {
-	fprintf(stderr, "Must provide timeout, with --timeout <s>.\n");
-	missing_any = 1;
+        fprintf(stderr, "Must provide timeout, with --timeout <s>.\n");
+        missing_any = 1;
     }
     if(missing_any) {
-	return 1;
+        return 1;
     }
     
     prepare(parameters);
@@ -204,33 +204,33 @@ usage:
 
 void report(struct statistics *statistics) {
     printf("%i total requests sent over %f seconds.\n",
-	   statistics->n_requests_sent,
-	   ((float) statistics->total_duration) / 1.0e9);
+           statistics->n_requests_sent,
+           ((float) statistics->total_duration) / 1.0e9);
     printf("\n");
     printf("%i total successes.\n",
-	   statistics->n_successes);
+           statistics->n_successes);
     printf("Success times (min/avg/max, per-second): %f/%f/%f, %f\n",
-	   statistics->min_success_time,
-	   statistics->average_success_time,
-	   statistics->max_success_time,
-	   1.0 / statistics->average_success_time);
+           statistics->min_success_time,
+           statistics->average_success_time,
+           statistics->max_success_time,
+           1.0 / statistics->average_success_time);
     printf("Response lengths (min/avg/max): %f/%f/%f\n",
-	   statistics->min_response_length,
-	   statistics->average_response_length,
-	   statistics->max_response_length);
+           statistics->min_response_length,
+           statistics->average_response_length,
+           statistics->max_response_length);
     printf("\n");
     printf("%i total errors.\n",
-	   statistics->n_errors);
+           statistics->n_errors);
     printf("Error times (min/avg/max, per-second): %f/%f/%f, %f\n",
-	   statistics->min_error_time,
-	   statistics->average_error_time,
-	   statistics->max_error_time,
-	   1.0 / statistics->average_error_time);
+           statistics->min_error_time,
+           statistics->average_error_time,
+           statistics->max_error_time,
+           1.0 / statistics->average_error_time);
     printf("\n");
     printf("%i failures to connect, %i disconnects, and %i timeouts.\n",
-	   statistics->n_failures_to_connect,
-	   statistics->n_disconnects,
-	   statistics->n_timeouts);
+           statistics->n_failures_to_connect,
+           statistics->n_disconnects,
+           statistics->n_timeouts);
     printf("\n");
     printf("Too slow - make it faster!\n");
 }
@@ -238,9 +238,10 @@ void report(struct statistics *statistics) {
 
 void prepare(struct parameters *parameters) {
     struct global_context *global_context
-	= malloc(sizeof(struct global_context));
+        = malloc(sizeof(struct global_context));
     
     global_context->n_connections_made = 0;
+    global_context->n_remaining_connections = parameters->n_requests;
     global_context->n_requests_sent = 0;
     global_context->n_responses_received = 0;
     global_context->statistics = NULL;
@@ -255,9 +256,9 @@ void prepare(struct parameters *parameters) {
     prepare_request_text(global_context);
     
     printf("Benching http://%s:%i%s will start in 100ms.\n",
-	   parameters->server,
-	   parameters->port,
-	   parameters->path);
+           parameters->server,
+           parameters->port,
+           parameters->path);
     fflush(stdout);
     
     prepare_heavy_lifting(global_context);
@@ -269,9 +270,9 @@ void prepare_rlimit(struct global_context *global_context) {
 
     int next_fd = dup(0);
     if(next_fd == -1) {
-	fprintf(stderr,
-		"Error trying to predict how many fds will be needed.\n");
-	exit(1);
+        fprintf(stderr,
+                "Error trying to predict how many fds will be needed.\n");
+        exit(1);
     }
     close(next_fd);
     
@@ -284,26 +285,26 @@ void prepare_rlimit(struct global_context *global_context) {
     struct rlimit rlimit;
     getrlimit(RLIMIT_NOFILE, &rlimit);
     if(rlimit.rlim_cur < n_fds_needed) {
-	if(rlimit.rlim_max < n_fds_needed) {
-	    rlimit.rlim_cur = n_fds_needed;
-	    rlimit.rlim_max = n_fds_needed;
-	} else {
-	    rlimit.rlim_cur = n_fds_needed;
-	}
-	
-	if(-1 == setrlimit(RLIMIT_NOFILE, &rlimit)) {
-	    fprintf(stderr, "Unable to raise rlimit on fds (error %i).\n",
-		    errno);
-	    exit(1);
-	}
+        if(rlimit.rlim_max < n_fds_needed) {
+            rlimit.rlim_cur = n_fds_needed;
+            rlimit.rlim_max = n_fds_needed;
+        } else {
+            rlimit.rlim_cur = n_fds_needed;
+        }
+        
+        if(-1 == setrlimit(RLIMIT_NOFILE, &rlimit)) {
+            fprintf(stderr, "Unable to raise rlimit on fds (error %i).\n",
+                    errno);
+            exit(1);
+        }
     }
     getrlimit(RLIMIT_NOFILE, &rlimit);
     if(rlimit.rlim_cur < n_fds_needed) {
-	fprintf(stderr,
-		"Unable to raise rlimit on fds "
-		"(the system only gave us %lli).\n",
-		(long long) rlimit.rlim_cur);
-	exit(1);
+        fprintf(stderr,
+                "Unable to raise rlimit on fds "
+                "(the system only gave us %lli).\n",
+                (long long) rlimit.rlim_cur);
+        exit(1);
     }
 }
 
@@ -315,15 +316,15 @@ void prepare_network(struct global_context *global_context) {
     
     protoent = getprotobyname("IP");
     if(!protoent) {
-	fprintf(stderr, "Error looking up IP protocol number.\n");
-	exit(1);
+        fprintf(stderr, "Error looking up IP protocol number.\n");
+        exit(1);
     }
     int ip = protoent->p_proto;
     
     protoent = getprotobyname("TCP");
     if(!protoent) {
-	fprintf(stderr, "Error looking up TCP protocol number.\n");
-	exit(1);
+        fprintf(stderr, "Error looking up TCP protocol number.\n");
+        exit(1);
     }
     int tcp = protoent->p_proto;
     
@@ -335,8 +336,8 @@ void prepare_network(struct global_context *global_context) {
     
     struct addrinfo hints;
     hints.ai_flags = AI_ADDRCONFIG
-	             | AI_ALL
-	             | AI_NUMERICSERV;
+                     | AI_ALL
+                     | AI_NUMERICSERV;
     hints.ai_family = PF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
@@ -347,12 +348,12 @@ void prepare_network(struct global_context *global_context) {
     
     struct addrinfo *addrinfos;
     if(getaddrinfo(hostname, port, &hints, &addrinfos)) {
-	fprintf(stderr, "Error while attempting to resolve address.\n");
-	exit(1);
+        fprintf(stderr, "Error while attempting to resolve address.\n");
+        exit(1);
     }
     if(!addrinfos) {
-	fprintf(stderr, "Server not found.\n");
-	exit(1);
+        fprintf(stderr, "Server not found.\n");
+        exit(1);
     }
     
     int family = addrinfos->ai_family;
@@ -360,7 +361,7 @@ void prepare_network(struct global_context *global_context) {
     int protocol = addrinfos->ai_protocol;
     socklen_t sockaddr_size = addrinfos->ai_addrlen;
     struct sockaddr *sockaddr = malloc(sockaddr_size);
-    memcpy(addrinfos->ai_addr, sockaddr, sockaddr_size);
+    memcpy(sockaddr, addrinfos->ai_addr, sockaddr_size);
     
     freeaddrinfo(addrinfos);
     
@@ -378,10 +379,10 @@ void prepare_request_text(struct global_context *global_context) {
     struct parameters *parameters = global_context->parameters;
 
     global_context->request_text_length
-	= asprintf(&global_context->request_text,
-		   "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n",
-		   parameters->path,
-		   parameters->server);
+        = asprintf(&global_context->request_text,
+                   "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n",
+                   parameters->path,
+                   parameters->server);
 }
 
 
@@ -393,54 +394,44 @@ void prepare_heavy_lifting(struct global_context *global_context) {
     dispatch_queue_t queue = dispatch_get_main_queue();
     
     int64_t interval_between_requests
-	= (int64_t) (((float) 1000000000) / ((float) parameters->rate));
+        = (int64_t) (((float) 1000000000) / ((float) parameters->rate));
     
     struct statistics *statistics = malloc(sizeof(struct statistics));
-    struct context *final_context = malloc(sizeof(struct context));
     
     global_context->request_contexts
-	= malloc(global_context->n_request_contexts * sizeof(struct context));
+        = malloc(global_context->n_request_contexts * sizeof(struct context));
     for(int i = 0; i < global_context->n_request_contexts; i++) {
-	struct context *context = &global_context->request_contexts[i];
-	
-	dispatch_source_t initiate_source
-	    = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
-				     0,
-				     0,
-				     queue);
-	dispatch_set_context(initiate_source, context);
-	dispatch_source_set_event_handler_f
-	    (initiate_source, (void (*)(void *)) initiate_connection);
-	dispatch_source_set_timer(initiate_source,
-				  time_zero,
-				  i * interval_between_requests,
-				  0);
+        struct context *context = &global_context->request_contexts[i];
+        
+        dispatch_source_t initiate_source
+            = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
+                                     0,
+                                     0,
+                                     queue);
+        dispatch_set_context(initiate_source, context);
+        dispatch_source_set_event_handler_f
+            (initiate_source, (void (*)(void *)) initiate_connection);
+        dispatch_source_set_timer(initiate_source,
+                                  time_zero,
+                                  i * interval_between_requests,
+                                  0);
 
-	context->connection_initiated = 0;
-	context->request_sent = 0;
-	context->request_failed = 0;
-	context->response_received = 0;
-	context->response_timed_out = 0;
-	context->fd = -1;
-	context->initiate_source = initiate_source;
-	context->create_source = NULL;
-	context->read_source = NULL;
-	context->write_source = NULL;
-	context->global_context = global_context;
-	context->request_text_unsent = global_context->request_text;
-	context->request_text_unsent_size = global_context->request_text_length;
-	
-	dispatch_resume(initiate_source);
+        context->connection_initiated = 0;
+        context->request_sent = 0;
+        context->request_failed = 0;
+        context->response_received = 0;
+        context->response_timed_out = 0;
+        context->fd = -1;
+        context->initiate_source = initiate_source;
+        context->create_source = NULL;
+        context->read_source = NULL;
+        context->write_source = NULL;
+        context->global_context = global_context;
+        context->request_text_unsent = global_context->request_text;
+        context->request_text_unsent_size = global_context->request_text_length;
+        
+        dispatch_resume(initiate_source);
     }
-    
-    final_context->fd = -1;
-    final_context->initiate_source = NULL;
-    final_context->create_source = NULL;
-    final_context->read_source = NULL;
-    final_context->write_source = NULL;
-    final_context->global_context = global_context;
-    
-    global_context->final_context = final_context;
     
     statistics->statistics_valid = 0;
     statistics->time_initiated = time_zero;
@@ -450,27 +441,26 @@ void prepare_heavy_lifting(struct global_context *global_context) {
     signal(SIGINT, SIG_IGN);
     
     dispatch_source_t abort_source
-	= dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
-				 SIGINT,
-				 0,
-				 queue);
-    dispatch_set_context(abort_source, final_context);
+        = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,
+                                 SIGINT,
+                                 0,
+                                 queue);
+    dispatch_set_context(abort_source, global_context);
     dispatch_source_set_event_handler_f(abort_source,
-					(void (*)(void *)) finish_measuring);
+                                        (void (*)(void *)) finish_measuring);
     dispatch_resume(abort_source);
     
     global_context->abort_source = abort_source;
 }
 
 
-void finish_measuring(struct context *context) {
-    struct global_context *global_context = context->global_context;
+void finish_measuring(struct global_context *global_context) {
     struct statistics *statistics = global_context->statistics;
     
     statistics->time_completed = dispatch_time(DISPATCH_TIME_NOW, 0);
     
     statistics->total_duration
-	= statistics->time_completed - statistics->time_initiated;
+        = statistics->time_completed - statistics->time_initiated;
     int n_requests_sent = 0;
     int n_responses = 0;
     int n_successes = 0;
@@ -489,41 +479,41 @@ void finish_measuring(struct context *context) {
     float total_response_length = 0;
     
     for(int i = 0; i < global_context->n_request_contexts; i++) {
-	struct context *context = &global_context->request_contexts[i];
-	
-	if(context->request_sent) {
-	    n_requests_sent++;
-	    
-	    if(context->request_failed) {
-		n_disconnects++;
-	    } else if(context->response_received) {
-		float time = (float) (context->response_time_completed
-				      - context->request_time_initiated);
-		if(context->response_status / 100 == 2) {
-		    n_successes++;
-		    if(time < min_success_time) min_success_time = time;
-		    if(time > max_success_time) max_success_time = time;
-		    total_success_time += time;
-		    
-		    float response_length
-			= (float) context->response_length;
-		    if(response_length < min_response_length)
-			min_response_length = response_length;
-		    if(response_length > max_response_length)
-			max_response_length = response_length;
-		    total_response_length += response_length;
-		} else {
-		    n_errors++;
-		    if(time < min_error_time) min_error_time = time;
-		    if(time > max_error_time) max_error_time = time;
-		    total_error_time += time;
-		}
-	    } else if(context->response_timed_out) {
-		n_timeouts++;
-	    } else assert(0);
-	} else if(context->request_failed) {
-	    n_failures_to_connect++;
-	}
+        struct context *context = &global_context->request_contexts[i];
+        
+        if(context->request_sent) {
+            n_requests_sent++;
+            
+            if(context->request_failed) {
+                n_disconnects++;
+            } else if(context->response_received) {
+                float time = (float) (context->response_time_completed
+                                      - context->request_time_initiated);
+                if(context->response_status / 100 == 2) {
+                    n_successes++;
+                    if(time < min_success_time) min_success_time = time;
+                    if(time > max_success_time) max_success_time = time;
+                    total_success_time += time;
+                    
+                    float response_length
+                        = (float) context->response_length;
+                    if(response_length < min_response_length)
+                        min_response_length = response_length;
+                    if(response_length > max_response_length)
+                        max_response_length = response_length;
+                    total_response_length += response_length;
+                } else {
+                    n_errors++;
+                    if(time < min_error_time) min_error_time = time;
+                    if(time > max_error_time) max_error_time = time;
+                    total_error_time += time;
+                }
+            } else if(context->response_timed_out) {
+                n_timeouts++;
+            } else assert(0);
+        } else if(context->request_failed) {
+            n_failures_to_connect++;
+        }
     }
     
     statistics->n_requests_sent = n_requests_sent;
@@ -536,20 +526,20 @@ void finish_measuring(struct context *context) {
     statistics->min_success_time = min_success_time;
     statistics->max_success_time = max_success_time;
     statistics->average_success_time
-	= total_success_time / (float) n_successes;
+        = total_success_time / (float) n_successes;
     
     statistics->min_error_time = min_error_time;
     statistics->max_error_time = max_error_time;
     statistics->average_error_time
-	= total_error_time / (float) n_errors;
+        = total_error_time / (float) n_errors;
     
     statistics->min_response_length = min_response_length;
     statistics->max_response_length = max_response_length;
     statistics->average_response_length
-	= total_response_length / (float) n_successes;
+        = total_response_length / (float) n_successes;
     
     statistics->total_duration =
-	statistics->time_completed - statistics->time_initiated;
+        statistics->time_completed - statistics->time_initiated;
     
     statistics->statistics_valid = 1;
     
@@ -568,37 +558,37 @@ void initiate_connection(struct context *context) {
     struct global_context *global_context = context->global_context;
     
     int fd = socket(global_context->family,
-		    global_context->socktype,
-		    global_context->protocol);
+                    global_context->socktype,
+                    global_context->protocol);
     if(fd == -1) {
-	if(errno == EMFILE) {
-	    fprintf(stderr,
-		    "Out of file descriptors; highest okay one was %i.\n",
-		    global_context->highest_good_fd);
-	} else {
-	    fprintf(stderr, "Error creating socket: %i.\n",
-		    errno);
-	}
-	exit(1);
+        if(errno == EMFILE) {
+            fprintf(stderr,
+                    "Out of file descriptors; highest okay one was %i.\n",
+                    global_context->highest_good_fd);
+        } else {
+            fprintf(stderr, "Error creating socket: %i.\n",
+                    errno);
+        }
+        exit(1);
     }
     
     if(fd > global_context->highest_good_fd)
-	global_context->highest_good_fd = fd;
-
+        global_context->highest_good_fd = fd;
+    
     int nodelay = 1;
     setsockopt(fd, global_context->tcp, TCP_NODELAY, &nodelay, sizeof(nodelay));
     
     fcntl(fd, F_SETFL, O_NONBLOCK);
-
+    
     int connect_result
-	= connect(fd, global_context->sockaddr, global_context->sockaddr_size);
+        = connect(fd, global_context->sockaddr, global_context->sockaddr_size);
     if((-1 == connect_result) && (errno != EINPROGRESS)) {
-	context->request_failed = 1;
-	
-	close(fd);
-	context->fd = -1;
-	
-	return;
+        context->request_failed = 1;
+        
+        close(fd);
+        context->fd = -1;
+        
+        return;
     }
     
     context->fd = fd;
@@ -606,47 +596,55 @@ void initiate_connection(struct context *context) {
     dispatch_queue_t queue = dispatch_get_main_queue();
     
     dispatch_source_t write_source
-	= dispatch_source_create(DISPATCH_SOURCE_TYPE_WRITE,
-				 context->fd,
-				 0,
-				 queue);
+        = dispatch_source_create(DISPATCH_SOURCE_TYPE_WRITE,
+                                 context->fd,
+                                 0,
+                                 queue);
     context->write_source = write_source;
     dispatch_set_context(write_source, context);
     dispatch_source_set_event_handler_f
-	(write_source, (void (*)(void *)) write_event);
+        (write_source, (void (*)(void *)) write_event);
     dispatch_source_set_timer(write_source,
-			      context->request_time_initiated,
-			      global_context->timeout,
-			      0);
+                              context->request_time_initiated,
+                              global_context->timeout,
+                              0);
     dispatch_resume(write_source);
 }
 
 
 void terminate_connection(struct context *context) {
     if(context->fd) {
-	close(context->fd);
-	context->fd = -1;
+        close(context->fd);
+        context->fd = -1;
     }
     
     if(context->initiate_source) {
-	dispatch_release(context->initiate_source);
-	context->initiate_source = NULL;
+        dispatch_release(context->initiate_source);
+        context->initiate_source = NULL;
     }
     
     if(context->create_source) {
-	dispatch_release(context->create_source);
-	context->create_source = NULL;
+        dispatch_release(context->create_source);
+        context->create_source = NULL;
     }
     
     if(context->write_source) {
-	dispatch_release(context->write_source);
-	context->write_source = NULL;
+        dispatch_release(context->write_source);
+        context->write_source = NULL;
     }
     
     if(context->read_source) {
-	dispatch_release(context->read_source);
-	context->read_source = NULL;
+        dispatch_release(context->read_source);
+        context->read_source = NULL;
     }
+
+    struct global_context *global_context = context->global_context;
+
+    global_context->n_remaining_connections--;
+    printf("closed; %i remaining\n", global_context->n_remaining_connections);
+    
+    if(global_context->n_remaining_connections == 0)
+        finish_measuring(global_context);
 }
 
 
@@ -656,76 +654,83 @@ void write_event(struct context *context) {
     struct global_context *global_context = context->global_context;
     
     if(now - context->request_time_initiated > global_context->timeout) {
-	context->response_timed_out = 1;
-	context->response_time_completed = now;
-	
-	terminate_connection(context);
-	
-	return;
+        context->response_timed_out = 1;
+        context->response_time_completed = now;
+        
+        terminate_connection(context);
+        
+        return;
     }
     
-    if(!context->fd)
-	return;
+    if(context->fd == -1)
+        return;
     
     int fd_error = 0;
     socklen_t fd_error_size = sizeof(fd_error);
     getsockopt(context->fd,
-	       SOL_SOCKET,
-	       SO_ERROR,
-	       &fd_error,
-	       &fd_error_size);
+               SOL_SOCKET,
+               SO_ERROR,
+               &fd_error,
+               &fd_error_size);
     if(fd_error) {
-	printf("oops %i\n", fd_error);
-	close(context->fd);
-	context->fd = -1;
-	
-	context->request_failed = 1;
-	
-	return;
+        if(fd_error == ECONNREFUSED) {
+            printf("Connection refused.\n");
+        } else {
+            printf("Mysterious error %i\n", fd_error);
+        }
+        
+        context->request_failed = 1;
+         
+        terminate_connection(context);
+        
+        return;
     }
     
     if(context->request_text_unsent_size == 0) {
-	dispatch_release(context->write_source);
-	context->write_source = NULL;
-	
-	return;
+        dispatch_release(context->write_source);
+        context->write_source = NULL;
+        
+        return;
     }
     
     ssize_t send_result = send(context->fd,
-			       context->request_text_unsent,
-			       context->request_text_unsent_size,
-			       0);
+                               context->request_text_unsent,
+                               context->request_text_unsent_size,
+                               0);
     if(send_result == -1) {
-	return;
+        return;
     }
     context->request_text_unsent += send_result;
     context->request_text_unsent_size -= send_result;
     if(context->request_text_unsent_size > 0) {
-	return;
+        return;
     }
     
     dispatch_release(context->write_source);
     context->write_source = NULL;
-
+    
     dispatch_queue_t queue = dispatch_get_main_queue();
     dispatch_source_t read_source
-	= dispatch_source_create(DISPATCH_SOURCE_TYPE_READ,
-				 context->fd,
-				 0,
-				 queue);
+        = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ,
+                                 context->fd,
+                                 0,
+                                 queue);
     context->read_source = read_source;
     dispatch_set_context(read_source, (void *) context);
     dispatch_source_set_event_handler_f
-	(read_source, (void (*)(void *)) read_event);
+        (read_source, (void (*)(void *)) read_event);
     dispatch_source_set_timer(read_source,
-			      context->request_time_initiated,
-			      global_context->timeout,
-			      0);
+                              context->request_time_initiated,
+                              global_context->timeout,
+                              0);
     dispatch_resume(read_source);
 }
 
 
 void read_event(struct context *context) {
+    printf("read event\n");
+    
     dispatch_source_t source = context->read_source;
-    close(context->fd);
+
+    terminate_connection(context);
 }
