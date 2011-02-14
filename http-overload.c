@@ -54,12 +54,17 @@ struct context {
     bool connection_initiated;
     bool request_sent;
     bool request_failed;
+    bool response_disconnected;
     bool response_received;
     bool response_timed_out;
     int response_status;
     int response_length;
     dispatch_time_t request_time_initiated;
     dispatch_time_t response_time_completed;
+    size_t response_buffer_size;
+    size_t response_buffer_length;
+    uint8_t *response_buffer;
+    uint8_t *response_buffer_unused_portion;
 };
 
 
@@ -106,6 +111,7 @@ void measure(struct statistics *statistics, struct parameters *parameters);
 void finish_measuring(struct global_context *global_context);
 void initiate_connection(struct context *context);
 void terminate_connection(struct context *context);
+int handle_timeout_and_errors(struct context *context);
 void write_event(struct context *context);
 void read_event(struct context *context);
 
@@ -419,6 +425,7 @@ void prepare_heavy_lifting(struct global_context *global_context) {
         context->connection_initiated = 0;
         context->request_sent = 0;
         context->request_failed = 0;
+        context->response_disconnected = 0;
         context->response_received = 0;
         context->response_timed_out = 0;
         context->fd = -1;
@@ -429,6 +436,11 @@ void prepare_heavy_lifting(struct global_context *global_context) {
         context->global_context = global_context;
         context->request_text_unsent = global_context->request_text;
         context->request_text_unsent_size = global_context->request_text_length;
+        
+        context->response_buffer_size = 1024*1024;
+        context->response_buffer = malloc(context->response_buffer_size);
+        context->response_buffer_length = 0;
+        context->response_buffer_unused_portion = context->response_buffer;
         
         dispatch_resume(initiate_source);
     }
@@ -511,7 +523,11 @@ void finish_measuring(struct global_context *global_context) {
             } else if(context->response_timed_out) {
                 n_timeouts++;
             } else assert(0);
+        } else if(context->response_disconnected) {
+            n_disconnects++;
         } else if(context->request_failed) {
+            n_failures_to_connect++;
+        } else {
             n_failures_to_connect++;
         }
     }
@@ -588,6 +604,7 @@ void initiate_connection(struct context *context) {
         close(fd);
         context->fd = -1;
         
+        terminate_connection(context);
         return;
     }
     
@@ -641,14 +658,13 @@ void terminate_connection(struct context *context) {
     struct global_context *global_context = context->global_context;
 
     global_context->n_remaining_connections--;
-    printf("closed; %i remaining\n", global_context->n_remaining_connections);
     
     if(global_context->n_remaining_connections == 0)
         finish_measuring(global_context);
 }
 
 
-void write_event(struct context *context) {
+int handle_timeout_and_errors(struct context *context) {
     dispatch_time_t now = dispatch_time(DISPATCH_TIME_NOW, 0);
     
     struct global_context *global_context = context->global_context;
@@ -659,11 +675,11 @@ void write_event(struct context *context) {
         
         terminate_connection(context);
         
-        return;
+        return 1;
     }
     
     if(context->fd == -1)
-        return;
+        return 1;
     
     int fd_error = 0;
     socklen_t fd_error_size = sizeof(fd_error);
@@ -673,25 +689,33 @@ void write_event(struct context *context) {
                &fd_error,
                &fd_error_size);
     if(fd_error) {
-        if(fd_error == ECONNREFUSED) {
-            printf("Connection refused.\n");
-        } else {
-            printf("Mysterious error %i\n", fd_error);
+        context->request_failed = 1;
+        
+        switch(fd_error) {
+        case ECONNREFUSED:
+            break;
+        case ECONNRESET:
+            context->response_disconnected = 1;
+            break;
+        default:
+            printf("Unexpected network error: %i\n", fd_error);
+            break;
         }
         
-        context->request_failed = 1;
-         
         terminate_connection(context);
         
-        return;
+        return 1;
     }
     
-    if(context->request_text_unsent_size == 0) {
-        dispatch_release(context->write_source);
-        context->write_source = NULL;
-        
+    return 0;
+}
+
+
+void write_event(struct context *context) {
+    if(handle_timeout_and_errors(context))
         return;
-    }
+    
+    struct global_context *global_context = context->global_context;
     
     ssize_t send_result = send(context->fd,
                                context->request_text_unsent,
@@ -705,6 +729,8 @@ void write_event(struct context *context) {
     if(context->request_text_unsent_size > 0) {
         return;
     }
+    
+    context->request_sent = 1;
     
     dispatch_release(context->write_source);
     context->write_source = NULL;
@@ -728,9 +754,11 @@ void write_event(struct context *context) {
 
 
 void read_event(struct context *context) {
-    printf("read event\n");
+    if(handle_timeout_and_errors(context))
+        return;
     
     dispatch_source_t source = context->read_source;
-
+    
+    context->response_timed_out = 1;
     terminate_connection(context);
 }
